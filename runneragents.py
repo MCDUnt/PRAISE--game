@@ -29,3 +29,6 @@ class GameOverSensor(SimulatedSensor):
         r = self._env.get_property(self._agent_id, "game_over")
         return r.get("game_over", False)
 
+class ActionActuator(SimulatedActuator):
+    def act(self, action_name: str):
+        self._env.take_action(self._agent_id, action_name)
