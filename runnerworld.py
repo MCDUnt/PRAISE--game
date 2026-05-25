@@ -4,10 +4,9 @@ from statebuffer import IStateBuffer
 from environments import SimulatedEnvironment
 
 TRACK_LENGTH = 200
-MAX_DISTANCE = 20
-WIN_ERROR_DIFF = 2
-LOSE_ERROR_DIFF = 5
+MAX_DISTANCE = 12
 INITIAL_DISTANCE = 5
+DISTANCE_PER_ERROR = 3
 OBSTACLE_DENSITY = 0.30
 
 @unique
@@ -60,6 +59,7 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         self._track : list[ObstacleType] = _generate_track(TRACK_LENGTH)
         self._role_map: dict[int, Role] = {}
         self._states: dict[int, _AgentState] = {}
+        self._distance_between: int = INITIAL_DISTANCE
         self._game_over: bool = False
         self._winner: str | None = None
 
@@ -101,7 +101,9 @@ def get_property(self, agent_id: int, property_name: str):
         return {"agent": agent_id}
     return {"agent": agent_id, property_name: fn()}
 
-def take_action(self, agent_id: int, action_name: str, params: dict = {}):
+def take_action(self, agent_id: int, action_name: str, params: dict = {}) -> None:
+    if agent_id not in self._agents or self._game_over:
+        return
     state =self._states.get(agent_id)
     obstacle = self._next_obstacle(state.position)
     correct = CORRECT_ACTIONS[obstacle]
@@ -112,6 +114,11 @@ def take_action(self, agent_id: int, action_name: str, params: dict = {}):
     else:
         state.errors += 1
         state.last_correct = False
+        role = self._role_map[agent_id]
+        if role == Role.PLAYER:
+            self._distance_between += DISTANCE_PER_ERROR
+        else:
+            self._distance_between -= DISTANCE_PER_ERROR
     state.last_action = action_name
     self._check_game_over()
 
@@ -124,11 +131,7 @@ def _next_obstacle(self, position: int) -> ObstacleType:
     return ObstacleType.NONE
 
 def _distance(self) -> int:
-    criminal_pos = self._criminal_state().position
-    player_pos = self._player_state().position
-    if criminal_pos is None or player_pos is None:
-        return -1
-    return max(criminal_pos - player_pos, 0)
+    return self._distance_between
 
 def _criminal_position(self) -> int | None  :
     for aid, role in self._role_map.items():
@@ -150,24 +153,11 @@ def _oponent_errors(self, agent_id: int) -> int:
     return 0
 
 def _check_game_over(self) -> None:
-    criminal_errors = 0
-    player_errors = 0
-    for aid, role in self._role_map.items():
-        if role == Role.CRIMINAL:
-            criminal_errors = self._states[aid].errors
-        else:
-            player_errors = self._states[aid].errors
-    error_diff = player_errors - criminal_errors
-
-    if error_diff >= LOSE_ERROR_DIFF:
+    if self._distance_between >= 0:
         self._game_over = True
-        self._winner = "criminal"
-    elif criminal_errors - player_errors >= WIN_ERROR_DIFF:
-        if self._distance() <= 0:
-            self._game_over = True
-            self._winner = "player"
-
-    if self._distance() <= MAX_DISTANCE:
+        self._winner = "player"
+        self._distance_between = 0 # para que no quede > 0
+    elif self._distance_between <= MAX_DISTANCE:
         self._game_over = True
         self._winner = "criminal"
 
