@@ -1,7 +1,7 @@
 import random
 from agents import Agent
 from environment import SimulatedSensor, SimulatedActuator, SimulatedEnvironment
-from runnerworld import RunnerChaseEnvironment, Role, ObstacleType, CORRECT_ACTION
+from runnerworld import RunnerChaseEnvironment, Role, ObstacleType, CORRECT_ACTION, MISTAKE_RATE_INCREMENT, MISTAKE_RATE_MAX
 
 class PositionSensor(SimulatedSensor):
     def sense(self):
@@ -29,8 +29,10 @@ class GameOverSensor(SimulatedSensor):
         r = self._env.get_property(self._agent_id, "game_over")
         return r.get("game_over", False)
 
-class ActionActuator(SimulatedActuator):
-    def act(self, action_name: str):
+
+#-------------------Actuador compartido-------------------
+class RunnerActuator(SimulatedActuator):
+    def act(self, action):
         self._env.take_action(self._agent_id, action_name)
 
 class _BaseRunnerAgent(Agent):
@@ -74,10 +76,12 @@ class _BaseRunnerAgent(Agent):
         percept = self._perceive()
         self._act(percept)
 
+#-------------------Agente IA-------------------
 class CriminalAgent(_BaseRunnerAgent):
-    def __init__(self, env: SimulatedEnvironment, mistake_rate: float = 0.25):
+    def __init__(self, env: RunnerChaseEnvironment, base_mistake_rate: float = 0.15):
         super().__init__(env, Role.CRIMINAL)
-        self.mistake_rate = max(0.0, min(1.0, mistake_rate))
+        self._env_runner = env
+        self.mistake_rate = max(0.0, min(1.0, base_mistake_rate))
 
         self._wrong_actions = {
             "run": ["jump", "slide"],
@@ -87,38 +91,45 @@ class CriminalAgent(_BaseRunnerAgent):
             "go_right": ["run", "go_left"],
         }
     def function(self, percept):
-        obstacle_value = percept["next_obstacle"]
-        obstacle = ObstacleType(obstacle_value)
+        obstacle= ObstacleType(percept["next_obstacle"])
         correct = CORRECT_ACTION[obstacle]
+        mistake_rate = self._env_runner.get_mistake_rate_for_tick(self.base_mistake_rate)
 
         if random.random() < self.mistake_rate:
             wrong_choices = self._wrong_actions.get(correct, ["run"])
             return random.choice(wrong_choices)
         return correct
+
     def print_state(self):
         pos = self._pos()
         obs = self._obstacle()
         dist = self._distance()
         own, opp = self._errors()
-        print(f"[CRIMINAL] pos={pos:>3} | obstaculo={obs:<12}"
-              f"distancia={dist:>3} | errores_propios={own} | errores_jugador={opp})")
+        rate = self._env_runner.get_mistake_rate_for_tick(self.base_mistake_rate)
+        print(f"[CRIMINAL] pos={pos:>3} | obs={obs:<12}"
+              f"dist={dist:>3} | err_propios={own} | err_jugador={opp} | mistake_rate={rate:.0%}")
 
+#-------------------Agente Jugable-------------------
 class PlayerAgent(_BaseRunnerAgent):
     def __init__(self, env: SimulatedEnvironment):
         super().__init__(env, Role.PLAYER)
         self._pending_action :str = "run"
+    
     def set_action(self, action_name: str) -> None:
         valid = {"run", "jump", "slide", "go_left", "go_right"}
         if action_name in valid:
             self._pending_action = action_name
+    
     def function(self, percept):
         action = self._pending_action
-        self._pending_action = "run"
+        self._pending_action = "run" # reset a acción neutral
         return action
+    
     def print_state(self):
         pos = self._pos()
         obs = self._obstacle()
         dist = self._distance()
         own, opp = self._errors()
-        print(f"[PLAYER]   pos={pos:>3} | obstaculo={obs:<12}"
-              f"distancia={dist:>3} | errores_propios={own} | errores_jugador={opp})")
+        print(f"[PLAYER]   pos={pos:>3} | obs={obs:<12}"
+              f"dist={dist:>3} | err_propios={own} | err_criminal={opp})")
+
