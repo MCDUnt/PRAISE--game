@@ -13,7 +13,7 @@ import time
 from runnerworld import RunnerChaseEnvironment, SPEED_INITIAL_DELAY
 from runneragents import CriminalAgent, PlayerAgent
 from runnerbuffer import RunnerStateBuffer
-from runnerrenderers import ConsoleRunnerRenderer
+from runnerrenderers import PyGameRunnerRenderer, ConsoleRunnerRenderer
 from runnerstats import record_result, print_stats, reset_stats
 
 
@@ -68,8 +68,18 @@ def player_thread(agent: PlayerAgent, max_turns: int = 500):
 
 
 # ---------------------Hilo del renderer---------------------
+def pygame_render_thread(renderer: PyGameRunnerRenderer,agent: PlayerAgent, max_turns: int = 500):
+    global game_finished
+    for _ in range(max_turns):
+        if game_finished:
+            break
+        renderer.render()
+        agent.behave()
+        event_render_ready.set()
+    game_finished = True
 
-def render_thread(renderer_criminal, renderer_player):
+#---------------------Renderizado en consola---------------------
+def console_render_thread(renderer_criminal, renderer_player):
     while not game_finished:
         renderer_criminal.render()
         renderer_player.render()
