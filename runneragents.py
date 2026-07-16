@@ -133,3 +133,5 @@ class PlayerAgent(_BaseRunnerAgent):
         print(f"[PLAYER]   pos={pos:>3} | obs={obs:<12}"
               f"dist={dist:>3} | err_propios={own} | err_criminal={opp})")
 
+
+
