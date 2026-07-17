@@ -100,9 +100,11 @@ if __name__ == "__main__":
         print_stats()
         sys.exit(0)
 
+    use_console = "--console" in sys.argv
+
     print("=" * 55)
     print("  RUNNER CHASE — Modo Local")
-    print("  Atrapa al delincuente antes de que escape.")
+    print(" Modo:", "Consola" if use_console else "PyGame")
     print("=" * 55)
     print_stats()
 
@@ -114,22 +116,26 @@ if __name__ == "__main__":
     # Buffers y renderers
     buf_c = RunnerStateBuffer(criminal.id, env)
     buf_p = RunnerStateBuffer(player.id,   env)
-    rend_c = ConsoleRunnerRenderer()
-    rend_p = ConsoleRunnerRenderer()
-    rend_c.observe(buf_c)
-    rend_p.observe(buf_p)
-
+    if use_console:
+        rend_c = ConsoleRunnerRenderer()
+        rend_p = ConsoleRunnerRenderer()
+        rend_c.observe(buf_c)
+        rend_p.observe(buf_p)
     # Lanzar hilos
-    t_criminal = threading.Thread(target=criminal_thread, args=(criminal, env), daemon=True)
-    t_renderer = threading.Thread(target=render_thread,   args=(rend_c, rend_p), daemon=True)
-    t_criminal.start()
-    t_renderer.start()
+        t_criminal = threading.Thread(target=criminal_thread, args=(criminal, env), daemon=True)
+        t_renderer = threading.Thread(target=render_thread,   args=(rend_c, rend_p), daemon=True)
+        t_criminal.start()
+        t_renderer.start()
+        player_thread_console(player)
+    else:
+        renderer = PyGameRunnerRenderer(player_agent=player)
+        renderer.observe(buf_p)
 
-    # Jugador corre en el hilo principal (necesita input())
-    player_thread(player)
-
+        t_criminal = threading.Thread(target=criminal_thread, args=(criminal, env), daemon=True)
+        t_criminal.start()
+        pygame_render_thread(renderer, player)
     t_criminal.join(timeout=2)
-    t_renderer.join(timeout=2)
+    
 
     # Registrar resultado
     if env._winner:
