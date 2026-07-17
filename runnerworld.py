@@ -1,4 +1,5 @@
 import random
+import time
 from enum import Enum, unique
 from statebuffer import IStateBuffer
 from environments import SimulatedEnvironment
@@ -99,7 +100,7 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         if agent_id not in self._agents:
             return {}
 
-        state = self._states(agent_id)
+        state = self._states[agent_id]
         props = {
             "position": lambda: state.position,
             "next_obstacle": lambda: self._next_obstacle(state.position).value,

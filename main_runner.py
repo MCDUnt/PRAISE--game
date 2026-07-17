@@ -13,7 +13,7 @@ import time
 from runnerworld import RunnerChaseEnvironment, SPEED_INITIAL_DELAY
 from runneragents import CriminalAgent, PlayerAgent
 from runnerbuffer import RunnerStateBuffer
-from runnerrenderers import PyGameRunnerRenderer, ConsoleRunnerRenderer
+from runnerrenderers import PyGameRunnerRenderer, NullRunnerRenderer
 from runnerstats import record_result, print_stats, reset_stats
 
 
@@ -117,8 +117,8 @@ if __name__ == "__main__":
     buf_c = RunnerStateBuffer(criminal.id, env)
     buf_p = RunnerStateBuffer(player.id,   env)
     if use_console:
-        rend_c = ConsoleRunnerRenderer()
-        rend_p = ConsoleRunnerRenderer()
+        rend_c = NullRunnerRenderer()
+        rend_p = NullRunnerRenderer()
         rend_c.observe(buf_c)
         rend_p.observe(buf_p)
     # Lanzar hilos
