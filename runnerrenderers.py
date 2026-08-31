@@ -1,8 +1,7 @@
-#pip install pygame
 """
-PyGameRunnerRenderer — Renderer visual simple para Runner Chase
-Versión inicial: ventana, pista, agentes como rectángulos, HUD básico
-para probar funsionamiento del pygame y la comunicación con el PlayerAgent.
+PyGameRunnerRenderer — Renderer visual para Runner Chase
+Solo dibuja. No captura input ni conoce al agente.
+La grilla viene del entorno vía StateBuffer (igual que Vacuum).
 """
 
 import pygame
@@ -11,41 +10,39 @@ from renderers import IRenderer
 # ---------------------------------------------------------------------------
 # Colores
 # ---------------------------------------------------------------------------
-COLOR_BG         = (30, 30, 30)      # fondo oscuro
-COLOR_TRACK      = (80, 80, 80)      # pista
-COLOR_CRIMINAL   = (220, 60, 60)     # fugitivo — rojo
-COLOR_PLAYER     = (60, 180, 220)    # captor — azul
-COLOR_OBSTACLE   = (200, 140, 40)    # obstáculo — naranja
-COLOR_TEXT       = (240, 240, 240)   # texto blanco
-COLOR_WIN        = (80, 200, 80)     # verde victoria
-COLOR_LOSE       = (200, 60, 60)     # rojo derrota
+COLOR_BG         = (30, 30, 30)
+COLOR_TRACK      = (80, 80, 80)
+COLOR_CRIMINAL   = (220, 60, 60)
+COLOR_PLAYER     = (60, 180, 220)
+COLOR_OBSTACLE   = (200, 140, 40)
+COLOR_TEXT       = (240, 240, 240)
+COLOR_WIN        = (80, 200, 80)
+COLOR_LOSE       = (200, 60, 60)
 
 # ---------------------------------------------------------------------------
 # Dimensiones
 # ---------------------------------------------------------------------------
 SCREEN_W         = 900
 SCREEN_H         = 400
-TRACK_Y          = 200    # altura de la pista en pantalla
-TRACK_H          = 60     # grosor visual de la pista
+TRACK_Y          = 200
+TRACK_H          = 60
 AGENT_W          = 40
 AGENT_H          = 60
 OBSTACLE_W       = 30
 OBSTACLE_H       = 40
 FPS              = 60
 
-# Posiciones fijas en pantalla (la pista hace scroll, los agentes no se mueven en X)
-CRIMINAL_X       = 600    # fugitivo aparece más a la derecha
-PLAYER_X         = 200    # captor aparece más a la izquierda
+CRIMINAL_X       = 600
+PLAYER_X         = 200
 
 
 class PyGameRunnerRenderer(IRenderer):
     """
-    Renderer visual con PyGame para Runner Chase.
-    Lee el buffer y dibuja el estado en cada frame.
-    Las teclas W/S/A/D/ENTER se capturan acá y se mandan al PlayerAgent.
+    Lee la info del buffer y dibuja. Sin lógica de input.
+    El input vive en el entorno/agente (feedback profesor).
     """
 
-    def __init__(self, player_agent=None):
+    def __init__(self):
         pygame.init()
         self._screen       = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         pygame.display.set_caption("Runner Chase")
@@ -53,8 +50,8 @@ class PyGameRunnerRenderer(IRenderer):
         self._font         = pygame.font.SysFont("monospace", 18)
         self._font_big     = pygame.font.SysFont("monospace", 28, bold=True)
         self._statebuffer  = None
-        self._player_agent = player_agent   # referencia al PlayerAgent para mandar teclas
         self._running      = True
+        self.array         = []  # grilla preparada para dibujar (como Vacuum)
 
     # ------------------------------------------------------------------
     # IRenderer interface
@@ -67,72 +64,72 @@ class PyGameRunnerRenderer(IRenderer):
         if not self._running:
             return
 
-        # 1. Capturar eventos del sistema (cerrar ventana, teclas)
+        # 1. Eventos del sistema (solo cerrar ventana)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self._running = False
                 pygame.quit()
                 return
 
-        # 2. Capturar teclas y mandarlas al agente
-        self._handle_keys()
-
-        # 3. Leer estado del buffer
+        # 2. Leer estado del buffer (siempre el último, sin consumir)
         state = None
         if self._statebuffer:
             state = self._statebuffer.get_state()
 
-        # 4. Limpiar pantalla
+        # 3. Limpiar pantalla
         self._screen.fill(COLOR_BG)
 
-        # 5. Dibujar
+        # 4. Dibujar
         if state:
+            self._prepare_data(state)
             self._draw_track()
             self._draw_agents(state)
             self._draw_hud(state)
             if state.get("game_over"):
                 self._draw_game_over(state)
 
-        # 6. Mostrar frame
+        # 5. Mostrar frame
         pygame.display.flip()
         self._clock.tick(FPS)
 
     # ------------------------------------------------------------------
-    # Input del jugador
+    # Preparación de datos — transforma grid/state en array dibujable
+    # (igual que Vacuum PyGameRenderer._prepare_data)
     # ------------------------------------------------------------------
 
-    def _handle_keys(self) -> None:
-        if self._player_agent is None:
+    def _prepare_data(self, state: dict) -> None:
+        """
+        Convierte el estado del entorno en self.array.
+        Si el entorno ya manda 'grid', lo usa directo.
+        Si no (compatibilidad con runnerworld viejo), lo construye
+        desde next_obstacle/role para no romper antes del refactor A.
+        """
+        grid = state.get("grid")
+        if grid is not None:
+            self.array = grid
             return
 
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_w]:
-            self._player_agent.set_action("jump")
-        elif keys[pygame.K_s]:
-            self._player_agent.set_action("slide")
-        elif keys[pygame.K_a]:
-            self._player_agent.set_action("go_left")
-        elif keys[pygame.K_d]:
-            self._player_agent.set_action("go_right")
-        elif keys[pygame.K_RETURN]:
-            self._player_agent.set_action("run")
+        # Fallback legacy: construir grilla mínima desde estado viejo
+        # Fila 0: upcoming_track, Fila 1: posiciones relativas
+        upcoming = state.get("upcoming_track", [])
+        obstacle = state.get("next_obstacle", "none")
+        role = state.get("role", "")
+        # grid simple 2xN para debug visual
+        self.array = [upcoming, [role, obstacle]]
 
     # ------------------------------------------------------------------
     # Dibujo
     # ------------------------------------------------------------------
 
     def _draw_track(self) -> None:
-        """Dibuja la pista como una barra horizontal."""
         pygame.draw.rect(
             self._screen, COLOR_TRACK,
             (0, TRACK_Y, SCREEN_W, TRACK_H)
         )
 
     def _draw_agents(self, s: dict) -> None:
-        """Dibuja los dos agentes como rectángulos sobre la pista."""
         role = s.get("role", "")
 
-        # Captor — azul, abajo a la izquierda
         pygame.draw.rect(
             self._screen, COLOR_PLAYER,
             (PLAYER_X, TRACK_Y - AGENT_H, AGENT_W, AGENT_H)
@@ -140,7 +137,6 @@ class PyGameRunnerRenderer(IRenderer):
         label_p = self._font.render("CAPTOR", True, COLOR_TEXT)
         self._screen.blit(label_p, (PLAYER_X, TRACK_Y - AGENT_H - 20))
 
-        # Fugitivo — rojo, más a la derecha según distancia
         pygame.draw.rect(
             self._screen, COLOR_CRIMINAL,
             (CRIMINAL_X, TRACK_Y - AGENT_H, AGENT_W, AGENT_H)
@@ -148,7 +144,6 @@ class PyGameRunnerRenderer(IRenderer):
         label_c = self._font.render("FUGITIVO", True, COLOR_TEXT)
         self._screen.blit(label_c, (CRIMINAL_X, TRACK_Y - AGENT_H - 20))
 
-        # Obstáculo delante del agente activo
         obstacle = s.get("next_obstacle", "none")
         if obstacle != "none":
             obs_x = PLAYER_X + AGENT_W + 20 if role == "player" else CRIMINAL_X + AGENT_W + 20
@@ -160,7 +155,6 @@ class PyGameRunnerRenderer(IRenderer):
             self._screen.blit(obs_label, (obs_x, TRACK_Y - OBSTACLE_H - 20))
 
     def _draw_hud(self, s: dict) -> None:
-        """Dibuja el HUD: distancia, errores, obstáculo, última acción."""
         distance    = s.get("distance", 0)
         errors_self = s.get("errors_self", 0)
         errors_opp  = s.get("errors_opponent", 0)
@@ -189,7 +183,6 @@ class PyGameRunnerRenderer(IRenderer):
             y += 24
 
     def _draw_game_over(self, s: dict) -> None:
-        """Pantalla de fin de partida."""
         winner = s.get("winner")
         if winner == "player":
             msg   = "CAPTOR GANO"
@@ -198,12 +191,10 @@ class PyGameRunnerRenderer(IRenderer):
             msg   = "FUGITIVO ESCAPO"
             color = COLOR_LOSE
 
-        # Fondo semitransparente
         overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 160))
         self._screen.blit(overlay, (0, 0))
 
-        # Texto central
         text = self._font_big.render(msg, True, color)
         rect = text.get_rect(center=(SCREEN_W // 2, SCREEN_H // 2))
         self._screen.blit(text, rect)
@@ -211,6 +202,39 @@ class PyGameRunnerRenderer(IRenderer):
         sub = self._font.render("Cerrá la ventana para salir", True, COLOR_TEXT)
         sub_rect = sub.get_rect(center=(SCREEN_W // 2, SCREEN_H // 2 + 40))
         self._screen.blit(sub, sub_rect)
+
+
+class ConsoleRunnerRenderer(IRenderer):
+    """
+    Renderer de consola — solo imprime la grilla que viene del entorno.
+    Paridad con Vacuum_version/vacuumrenderers.py ConsoleRenderer.
+    Sin lógica.
+    """
+
+    def __init__(self):
+        self._statebuffer = None
+
+    def observe(self, statebuffer) -> None:
+        self._statebuffer = statebuffer
+
+    def render(self) -> None:
+        state = None
+        if self._statebuffer:
+            state = self._statebuffer.get_state()
+        if not state:
+            return
+
+        grid = state.get("grid")
+        if grid is not None:
+            for fila in grid:
+                print(" | ".join(str(c) for c in fila))
+        else:
+            # Fallback legacy
+            print(f"[Console] dist={state.get('distance')} obs={state.get('next_obstacle')} "
+                  f"role={state.get('role')} over={state.get('game_over')}")
+
+        if state.get("game_over"):
+            print(f"*** Ganó: {state.get('winner')} ***")
 
 
 class NullRunnerRenderer(IRenderer):

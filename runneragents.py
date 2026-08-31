@@ -1,3 +1,4 @@
+#esto es lo que toma las desiciones del jugador y las manda al PlayerAgent no el render
 import random
 from agents import Agent
 from environments import SimulatedSensor, SimulatedActuator, SimulatedEnvironment
@@ -95,7 +96,7 @@ class CriminalAgent(_BaseRunnerAgent):
         correct = CORRECT_ACTIONS[obstacle]
         mistake_rate = self._env_runner.get_mistake_rate_for_tick(self.mistake_rate)
 
-        if random.random() < self.mistake_rate:
+        if random.random() < mistake_rate:
             wrong_choices = self._wrong_actions.get(correct, ["run"])
             return random.choice(wrong_choices)
         return correct
@@ -132,4 +133,3 @@ class PlayerAgent(_BaseRunnerAgent):
         own, opp = self._errors()
         print(f"[PLAYER]   pos={pos:>3} | obs={obs:<12}"
               f"dist={dist:>3} | err_propios={own} | err_criminal={opp})")
-
