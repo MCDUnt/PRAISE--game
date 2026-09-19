@@ -34,6 +34,10 @@ class GameOverSensor(SimulatedSensor):
 #-------------------Actuador compartido-------------------
 class RunnerActuator(SimulatedActuator):
     def act(self, action):
+        # None = timeout: el entorno cuenta +3 pero no mueve personaje
+        if action is None:
+            self._env.take_action(self._agent.id, None)
+            return
         self._env.take_action(self._agent.id, action)
 
 class _BaseRunnerAgent(Agent):
@@ -114,16 +118,23 @@ class CriminalAgent(_BaseRunnerAgent):
 class PlayerAgent(_BaseRunnerAgent):
     def __init__(self, env: SimulatedEnvironment):
         super().__init__(env, Role.PLAYER)
-        self._pending_action :str = "run"
-    
-    def set_action(self, action_name: str) -> None:
+        self._pending_action: str | None = None
+
+    def has_pending_action(self) -> bool:
+        return self._pending_action is not None
+
+    def set_action(self, action_name: str | None) -> None:
+        # None = timeout -> el escenario se mueve, no el personaje
+        if action_name is None:
+            self._pending_action = None
+            return
         valid = {"run", "jump", "slide", "go_left", "go_right"}
         if action_name in valid:
             self._pending_action = action_name
-    
+
     def function(self, percept):
         action = self._pending_action
-        self._pending_action = "run" # reset a acción neutral
+        self._pending_action = None  # se consume, no vuelve a "run" solo
         return action
     
     def print_state(self):
@@ -133,3 +144,44 @@ class PlayerAgent(_BaseRunnerAgent):
         own, opp = self._errors()
         print(f"[PLAYER]   pos={pos:>3} | obs={obs:<12}"
               f"dist={dist:>3} | err_propios={own} | err_criminal={opp})")
+
+
+class CaptorAgent(_BaseRunnerAgent):
+    """
+    IA probabilística para rol PLAYER.
+    - Curva vinculada: base más bajo (0.10), sube 2x más rápido que Criminal
+    - Comparte mistake_rate del entorno (pool común de dificultad)
+    - Actúa cada tick (sin pending_action)
+    """
+    def __init__(self, env: RunnerChaseEnvironment, base_mistake_rate: float = 0.10):
+        super().__init__(env, Role.PLAYER)
+        self._env_runner = env
+        self.base_mistake_rate = max(0.0, min(1.0, base_mistake_rate))
+
+        self._wrong_actions = {
+            "run": ["jump", "slide"],
+            "jump": ["run", "slide"],
+            "slide": ["run", "jump"],
+            "go_left": ["run", "go_right"],
+            "go_right": ["run", "go_left"],
+        }
+
+    def function(self, percept):
+        obstacle = ObstacleType(percept["next_obstacle"])
+        correct = CORRECT_ACTIONS[obstacle]
+        # multiplier=2.0 → sube el doble de rápido (curva vinculada)
+        mistake_rate = self._env_runner.get_mistake_rate_for_tick(self.base_mistake_rate, multiplier=2.0)
+        
+        if random.random() < mistake_rate:
+            wrong_choices = self._wrong_actions.get(correct, ["run"])
+            return random.choice(wrong_choices)
+        return correct
+
+    def print_state(self):
+        pos = self._pos()
+        obs = self._obstacle()
+        dist = self._distance()
+        own, opp = self._errors()
+        rate = self._env_runner.get_mistake_rate_for_tick(self.base_mistake_rate, multiplier=2.0)
+        print(f"[CAPTOR]   pos={pos:>3} | obs={obs:<12}"
+              f"dist={dist:>3} | err_propios={own} | err_criminal={opp} | mistake_rate={rate:.0%}")

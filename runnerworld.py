@@ -1,14 +1,17 @@
 """
-runnerworld.py — Entorno Runner Chase (toda la lógica vive acá)
+runnerworld.py — Entorno del Runner Chase game (toda la lógica vive acá)
 Feedback profesor: obstáculos, posiciones, movimientos, ganar/perder,
 aparición de cosas y avance de tiempo son responsabilidad del entorno.
 """
 
+#------------- Fix race: tres variables compartidas sin Lock -------------
 import random
 import time
+import threading  # #------------- Fix race -------------
 from enum import Enum, unique
 from statebuffer import IStateBuffer
 from environments import SimulatedEnvironment
+#------------- Fix race: tres variables compartidas sin Lock -------------
 
 # ---------------------------------------------------------------------------
 # Constantes de juego
@@ -16,17 +19,17 @@ from environments import SimulatedEnvironment
 TRACK_LENGTH = 200
 MAX_DISTANCE = 12
 INITIAL_DISTANCE = 5
-DISTANCE_PER_ERROR = 3
+DISTANCE_PER_ERROR = 1
 OBSTACLE_DENSITY = 0.30
 SPEED_INTERVAL = 30
 SPEED_INCREMENT = 0.05
 SPEED_MIN_DELAY = 0.1
 SPEED_INITIAL_DELAY = 0.05
-MISTAKE_RATE_INTERVAL = 120
+MISTAKE_RATE_INTERVAL = 3
 MISTAKE_RATE_INCREMENT = 0.05
 MISTAKE_RATE_MAX = 0.60
 
-# Grilla consola 8 filas x 3 columnas (feedback 8x3)
+# Grilla consola 8 filas x 3 columnas
 GRID_ROWS = 8
 GRID_COLS = 3
 F_ROW = 6  # fila del fugitivo (1-indexed, fijo)
@@ -37,7 +40,7 @@ ROWS_PER_SECOND = 2  # 2 filas/s = 0.5s por fila, loop 4s
 @unique
 class ObstacleType(Enum):
     NONE = "none"
-    BLOCK = "block"          # saltar -> O abajo
+    BLOCK = "block"          # saltar -> O O O abajo
     LOW_BAR = "low_bar"      # deslizar -> X X X
     LEDGE_LEFT = "ledge_left"   # pared izq+centro -> X X _
     LEDGE_RIGHT = "ledge_right" # pared der+centro -> _ X X
@@ -53,7 +56,7 @@ CORRECT_ACTIONS: dict[ObstacleType, str] = {
 # Mapeo visual X/O para la grilla (solo X y O)
 OBSTACLE_PATTERNS: dict[ObstacleType, list[str]] = {
     ObstacleType.NONE:       [" ", " ", " "],
-    ObstacleType.BLOCK:      [" ", "O", " "],
+    ObstacleType.BLOCK:      ["O", "O", "O"],  
     ObstacleType.LOW_BAR:    ["X", "X", "X"],
     ObstacleType.LEDGE_LEFT: ["X", "X", " "],
     ObstacleType.LEDGE_RIGHT:[" ", "X", "X"],
@@ -72,6 +75,10 @@ def _generate_track(length: int) -> list[ObstacleType]:
             track.append(random.choice(pool))
         else:
             track.append(ObstacleType.NONE)
+    
+    if all(t == ObstacleType.NONE for t in track[:5]):
+        track[2] = random.choice(pool)
+        track[4] = random.choice(pool)
     return track
 
 class _AgentState:
@@ -88,13 +95,21 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         self._track: list[ObstacleType] = _generate_track(TRACK_LENGTH)
         self._role_map: dict[int, Role] = {}
         self._states: dict[int, _AgentState] = {}
+        self._uniq_states = {
+            "distance": INITIAL_DISTANCE,
+            "obstacle_row": OBSTACLE_SPAWN_ROW,
+            "obstacle_type": self._track[0],
+            "tick": 0,
+        }
+        self.DEBUG_FREEZE = False #DEBUG mueve obstaculos, pero no jugadores
         self._distance_between: int = INITIAL_DISTANCE
         self._game_over: bool = False
         self._winner: str | None = None
         self.tick: int = 0
         self._start_time: float = time.time()
-        self._current_delay: float = SPEED_INITIAL_DELAY
+        self._current_delay: float = 0.05 
         self._current_mistake_rate: float = 0.0
+        self._lock = threading.RLock()  
         # Obstáculo actual y su fila animada
         self._obstacle_index: int = 0
         self._obstacle_spawn_time: float = time.time()
@@ -147,55 +162,86 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         return {"agent": agent_id, property_name: fn()}
 
     def take_action(self, agent_id: int, action_name: str, params: dict = {}) -> None:
-        if agent_id not in self._agents or self._game_over:
-            # Igual notificar buffers para que vean game_over
-            for entry in self._statebuffers:
-                entry["statebuffer"].update(self._build_state_snapshot(entry["agent_id"]))
-            return
-        state = self._states.get(agent_id)
-        if state is None:
-            return
-        obstacle = self._next_obstacle(state.position)
-        correct = CORRECT_ACTIONS[obstacle]
+        with self._lock:  
+            self._avanzar_obstaculo_si_corresponde()  
+            if agent_id not in self._agents or self._game_over:
+                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+                grid = self._build_grid() 
+                for entry in self._statebuffers:
+                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid) 
+                    entry["statebuffer"].update(snap)
+                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+                return
+            #----------------- Lógica de accion para prueba -----------------
+            if self.DEBUG_FREEZE:
+                self._uniq_states["tick"] = self.tick
+                self._uniq_states["distance"] = self._distance_between
+                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+                grid = self._build_grid()  # #------------- Fix race -------------
+                for entry in self._statebuffers:
+                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)  # #------------- Fix race -------------
+                    entry["statebuffer"].update(snap)
+                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+                self.tick += 1
+                return
+            #----------------- Lógica de accion para prueba -----------------
+            state = self._states.get(agent_id) 
+            if state is None:
+                return
+            obstacle = self._next_obstacle(state.position)
+            correct = CORRECT_ACTIONS[obstacle]
 
-        # Actualizar columna para movimientos laterales
-        if action_name == "go_left":
-            state.col = max(0, state.col - 1)
-        elif action_name == "go_right":
-            state.col = min(GRID_COLS - 1, state.col + 1)
-        # jump/slide/run no cambian col, pero se evalúan igual
+            # Actualizar columna para movimientos laterales
+            if action_name == "go_left":
+                state.col = max(0, state.col - 1)
+            elif action_name == "go_right":
+                state.col = min(GRID_COLS - 1, state.col + 1)
+            
 
-        if action_name == correct:
-            state.position = min(state.position + 1, TRACK_LENGTH - 1)
-            state.last_correct = True
-            # Avanzar índice de obstáculo global si el player acertó
-            # (sincroniza grilla visual con progreso)
-            if self._states[agent_id].position > self._obstacle_index:
-                self._obstacle_index = state.position
-                self._obstacle_spawn_time = time.time()
-        else:
-            state.errors += 1
-            state.last_correct = False
-            role = self._role_map[agent_id]
-            if role == Role.PLAYER:
-                self._distance_between += DISTANCE_PER_ERROR
+            # NONE no penaliza si no hiciste nada
+            if action_name is None and obstacle == ObstacleType.NONE:
+                state.last_correct = True
+                state.last_action = None
+                #------- Error por choque con obstaculo no por != correct -------
+                #pulir a condicion real de colicion
+                #------- Error por choque con obstaculo no por != correct -------
             else:
-                self._distance_between -= DISTANCE_PER_ERROR
-        state.last_action = action_name
-        self._check_game_over()
-        for entry in self._statebuffers:
-            entry["statebuffer"].update(self._build_state_snapshot(entry["agent_id"]))
-        self.tick += 1
-        self._update_difficulty()
+                if action_name == correct:
+                    state.position = min(state.position + 1, TRACK_LENGTH - 1)
+                    state.last_correct = True
+                    # Avanzar índice de obstáculo global si el player acertó
+                    # (sincroniza grilla visual con progreso)
+                    if self._states[agent_id].position > self._obstacle_index:
+                       self._obstacle_index = state.position
+                       self._obstacle_spawn_time = time.time()
+                else:
+                    state.errors += 1
+                    state.last_correct = False
+                    role = self._role_map[agent_id]
+                    if role == Role.PLAYER:
+                        self._distance_between += DISTANCE_PER_ERROR
+                    else:
+                        self._distance_between -= DISTANCE_PER_ERROR
+            state.last_action = action_name
+            self._check_game_over() #Descomentar Borrar# #
+            #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+            grid = self._build_grid()  # #------------- Fix race -------------
+            for entry in self._statebuffers:
+                snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)  # #------------- Fix race -------------
+                entry["statebuffer"].update(snap)
+            #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
+            self.tick += 1
+            self._update_difficulty()
+            #print(f"Agente - {agent_id}: {action_name}")#COMENTARIO PARA ENCONTRAR MAS FACIL Debug para ver por consola las acciones hechas por el agente ante el siguiente obstaculo
 
     def _update_difficulty(self) -> None:
         if self.tick % SPEED_INTERVAL == 0:
             self._current_delay = max(self._current_delay - SPEED_INCREMENT, SPEED_MIN_DELAY)
 
-    def get_mistake_rate_for_tick(self, base_rate: float) -> float:
+    def get_mistake_rate_for_tick(self, base_rate: float, multiplier: float = 1.0) -> float:
         elapsed = time.time() - self._start_time
         intervals = int(elapsed // MISTAKE_RATE_INTERVAL)
-        rate = base_rate + intervals * MISTAKE_RATE_INCREMENT
+        rate = base_rate + intervals * MISTAKE_RATE_INCREMENT * multiplier
         rate = min(rate, MISTAKE_RATE_MAX)
         self._current_mistake_rate = rate
         return rate
@@ -218,25 +264,30 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
     def _check_game_over(self) -> None:
         if self._distance_between <= 0:
             self._game_over = True
-            self._winner = "player"
+            self._winner = "player"  
             self._distance_between = 0
         elif self._distance_between >= MAX_DISTANCE:
             self._game_over = True
-            self._winner = "criminal"
+            self._winner = "criminal"  
 
     # ------------------------------------------------------------------
-    # Grilla 8x3 — toda la lógica visual vive acá (feedback profesor)
+    #                           Grilla 8x3
     # ------------------------------------------------------------------
     def _get_obstacle_row(self) -> int:
-        """Fila actual del obstáculo (1..8) según tiempo. Avanza 2 filas/s."""
+        """Fila actual del obstáculo (1..8) según tiempo. Avanza 2 filas/s. Puro sin mutar."""
+        if self._game_over:
+            return OBSTACLE_SPAWN_ROW
+        elapsed = time.time() - self._obstacle_spawn_time
+        row = OBSTACLE_SPAWN_ROW - int(elapsed * ROWS_PER_SECOND)
+        return row
+
+    def _avanzar_obstaculo_si_corresponde(self) -> None:
+        """Avanza _obstacle_index solo si pasaron 4s (row<1). Llamar una vez por tick con lock."""
         elapsed = time.time() - self._obstacle_spawn_time
         row = OBSTACLE_SPAWN_ROW - int(elapsed * ROWS_PER_SECOND)
         if row < 1:
-            # Obstáculo salió por abajo -> spawnear siguiente
             self._obstacle_index = min(self._obstacle_index + 1, TRACK_LENGTH - 1)
             self._obstacle_spawn_time = time.time()
-            row = OBSTACLE_SPAWN_ROW
-        return row
 
     def _c_row_from_distance(self) -> int:
         """Fila de C según distancia: F fijo en 6, C en 4 inicial, 7 gana C, 1 gana F"""
@@ -247,26 +298,14 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
 
     def _build_grid(self) -> list[list[str]]:
         grid = [[" " for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
-        # Obstáculo actual (basado en índice del captor o índice global)
-        # Usamos el próximo obstáculo del captor para la visual principal
-        # Si no hay captor aún, usar _obstacle_index
-        player_pos = None
-        for aid, role in self._role_map.items():
-            if role == Role.PLAYER and aid in self._states:
-                player_pos = self._states[aid].position
-                break
-        idx = player_pos if player_pos is not None else self._obstacle_index
-        obst_type = self._next_obstacle(idx)
+        obst_type = self._next_obstacle(self._obstacle_index)
         pattern = OBSTACLE_PATTERNS.get(obst_type, [" ", " ", " "])
         obs_row = self._get_obstacle_row()
-        # Grid se imprime de arriba (índice 0 = fila 8) a abajo (índice 7 = fila 1)
-        # Convertir fila 1..8 a índice 0..7 invertido
         r = GRID_ROWS - obs_row
         if 0 <= r < GRID_ROWS:
             for c in range(GRID_COLS):
                 grid[r][c] = pattern[c]
 
-        # F fijo en fila 6 -> índice 2
         f_col = 1
         for aid, role in self._role_map.items():
             if role == Role.CRIMINAL and aid in self._states:
@@ -274,7 +313,7 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
                 break
         grid[GRID_ROWS - F_ROW][f_col] = "F"
 
-        # C dinámico por distancia (fila 1..7) -> índice invertido
+        # C dinámico por distancia (fila 1..7)
         c_col = 1
         for aid, role in self._role_map.items():
             if role == Role.PLAYER and aid in self._states:
@@ -285,17 +324,16 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
 
         return grid
 
-    def _build_state_snapshot(self, agent_id: int) -> dict:
+    def _build_state_snapshot(self, agent_id: int, grid_override=None) -> dict:
+        grid = grid_override if grid_override is not None else self._build_grid()
         state = self._states.get(agent_id)
         if state is None:
-            return {"grid": self._build_grid(), "distance": self._distance(), "game_over": self._game_over, "winner": self._winner}
-        # Snapshot mínimo para rendering (feedback: solo lo necesario)
+            return {"grid": grid, "distance": self._distance(), "game_over": self._game_over, "winner": self._winner}
         return {
-            "grid": self._build_grid(),
+            "grid": grid,
             "distance": self._distance(),
             "game_over": self._game_over,
             "winner": self._winner,
-            # Compatibilidad legacy para HUD (opcional)
             "role": self._role_map[agent_id].value,
             "position": state.position,
             "next_obstacle": self._next_obstacle(state.position).value,

@@ -1,6 +1,5 @@
 """
-runnerbuffer.py — StateBuffer del juego Runner Chase
-Solo guarda lo necesario para rendering. El entorno decide qué mandar.
+runnerbuffer.py — Solo guarda lo necesario para rendering. El entorno decide qué mandar.
 """
 
 from statebuffer import IStateBuffer

@@ -1,10 +1,10 @@
 """
-PyGameRunnerRenderer — Renderer visual para Runner Chase
-Solo dibuja. No captura input ni conoce al agente.
-La grilla viene del entorno vía StateBuffer (igual que Vacuum).
+PyGameRunnerRenderer — Solo dibuja. No captura input ni conoce al agente.
+La grilla viene del entorno vía StateBuffer (igual que la version Vacuum).
 """
 
 import pygame
+import os, time
 from renderers import IRenderer
 
 # ---------------------------------------------------------------------------
@@ -82,8 +82,11 @@ class PyGameRunnerRenderer(IRenderer):
         # 4. Dibujar
         if state:
             self._prepare_data(state)
-            self._draw_track()
-            self._draw_agents(state)
+            #------------- Fix: self.array ahora sí se usa -------------
+            self._draw_grid_from_array()  # #------------- Fix: dibuja la grilla 8x3 del entorno
+            #------------- Fix: self.array ahora sí se usa -------------
+            #self._draw_track()
+            #self._draw_agents(state)
             self._draw_hud(state)
             if state.get("game_over"):
                 self._draw_game_over(state)
@@ -94,28 +97,52 @@ class PyGameRunnerRenderer(IRenderer):
 
     # ------------------------------------------------------------------
     # Preparación de datos — transforma grid/state en array dibujable
-    # (igual que Vacuum PyGameRenderer._prepare_data)
     # ------------------------------------------------------------------
 
     def _prepare_data(self, state: dict) -> None:
         """
         Convierte el estado del entorno en self.array.
         Si el entorno ya manda 'grid', lo usa directo.
-        Si no (compatibilidad con runnerworld viejo), lo construye
-        desde next_obstacle/role para no romper antes del refactor A.
         """
         grid = state.get("grid")
         if grid is not None:
-            self.array = grid
+            self.array = grid 
             return
 
-        # Fallback legacy: construir grilla mínima desde estado viejo
-        # Fila 0: upcoming_track, Fila 1: posiciones relativas
+        # Fallback legacy ahora no se usa (grid siempre viene), se deja por compatibilidad
         upcoming = state.get("upcoming_track", [])
         obstacle = state.get("next_obstacle", "none")
         role = state.get("role", "")
-        # grid simple 2xN para debug visual
         self.array = [upcoming, [role, obstacle]]
+
+    #dibujo de grilla 8x3
+    def _draw_grid_from_array(self) -> None:
+        """Dibuja la grilla 8x3 del entorno (F/C/X/O) usando self.array."""
+        if not self.array or len(self.array) != 8:
+            return
+        cols = 3
+        cell_w = SCREEN_W // cols
+        cell_h = 30
+        start_y = 50
+        for r, fila in enumerate(self.array):
+            for c, val in enumerate(fila):
+                x = c * cell_w
+                y = start_y + r * cell_h
+                # Color según valor
+                if val == "F":
+                    color = COLOR_CRIMINAL
+                elif val == "C":
+                    color = COLOR_PLAYER
+                elif val == "X":
+                    color = COLOR_OBSTACLE
+                elif val == "O":
+                    color = (100, 200, 100)
+                else:
+                    color = COLOR_TRACK
+                pygame.draw.rect(self._screen, color, (x+2, y+2, cell_w-4, cell_h-4))
+                if val.strip():
+                    label = self._font.render(val, True, COLOR_TEXT)
+                    self._screen.blit(label, (x + cell_w//2 - 6, y + 6))
 
     # ------------------------------------------------------------------
     # Dibujo
@@ -173,7 +200,7 @@ class PyGameRunnerRenderer(IRenderer):
             f"Última acción: {last_action} [{result_icon}]",
             f"Tick: {tick}  |  Dificultad IA: {mistake:.0%}",
             "",
-            "W=saltar  S=deslizar  A=izq  D=der  ENTER=correr",
+            "W=saltar  S=deslizar  A=izq  D=der",
         ]
 
         y = 20
@@ -208,16 +235,23 @@ class ConsoleRunnerRenderer(IRenderer):
     """
     Renderer de consola — solo imprime la grilla que viene del entorno.
     Paridad con Vacuum_version/vacuumrenderers.py ConsoleRenderer.
-    Sin lógica.
+    Sin lógica. Solo imprime cuando la grilla cambia para no inundar el input.
+    # [CAMBIO C] Render solo dibuja, no captura input (antes _handle_keys)
+    # [CAMBIO] Mensaje genérico "*** Ganó: {winner} ***" queda igual para player/criminal
     """
 
     def __init__(self):
         self._statebuffer = None
+        self._last_grid = None
+        self._last_print = 0
+        import threading
+        self._lock = threading.Lock()
 
     def observe(self, statebuffer) -> None:
         self._statebuffer = statebuffer
 
     def render(self) -> None:
+        import time
         state = None
         if self._statebuffer:
             state = self._statebuffer.get_state()
@@ -225,16 +259,29 @@ class ConsoleRunnerRenderer(IRenderer):
             return
 
         grid = state.get("grid")
+        # Solo imprimir si cambió o pasó 0.4s (evita flood que tapa el input)
+        now = time.time()
         if grid is not None:
-            for fila in grid:
-                print(" | ".join(str(c) for c in fila))
+            if grid == self._last_grid and now - self._last_print < 0.4:
+                return
+            self._last_grid = [row[:] for row in grid]
+            self._last_print = now
+            with self._lock:
+                # Limpiar y dibujar grilla 8x3 con borde
+                print("\n" + "-" * 13)
+                #os.system("cls" if os.name == "nt" else "clear")
+                for fila in grid:
+                    print(" | ".join(str(c) if str(c).strip() else " " for c in fila))
+                print("-" * 13)
+                print(f"Dist: {state.get('distance')}  F:6 C:{state.get('grid') and '?' or ''}")
         else:
-            # Fallback legacy
             print(f"[Console] dist={state.get('distance')} obs={state.get('next_obstacle')} "
                   f"role={state.get('role')} over={state.get('game_over')}")
 
+        #Alerta de victoria igual para player y criminal 
         if state.get("game_over"):
-            print(f"*** Ganó: {state.get('winner')} ***")
+            with self._lock:
+                print(f"*** Ganó: {state.get('winner')} ***")
 
 
 class NullRunnerRenderer(IRenderer):
