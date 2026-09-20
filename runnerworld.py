@@ -4,14 +4,12 @@ Feedback profesor: obstáculos, posiciones, movimientos, ganar/perder,
 aparición de cosas y avance de tiempo son responsabilidad del entorno.
 """
 
-#------------- Fix race: tres variables compartidas sin Lock -------------
 import random
 import time
-import threading  # #------------- Fix race -------------
+import threading  
 from enum import Enum, unique
 from statebuffer import IStateBuffer
 from environments import SimulatedEnvironment
-#------------- Fix race: tres variables compartidas sin Lock -------------
 
 # ---------------------------------------------------------------------------
 # Constantes de juego
@@ -163,28 +161,22 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
 
     def take_action(self, agent_id: int, action_name: str, params: dict = {}) -> None:
         with self._lock:  
-            self._avanzar_obstaculo_si_corresponde()  
+            self.advance_obstacle_needed()  
             if agent_id not in self._agents or self._game_over:
-                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
                 grid = self._build_grid() 
                 for entry in self._statebuffers:
                     snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid) 
                     entry["statebuffer"].update(snap)
-                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
                 return
-            #----------------- Lógica de accion para prueba -----------------
             if self.DEBUG_FREEZE:
                 self._uniq_states["tick"] = self.tick
                 self._uniq_states["distance"] = self._distance_between
-                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
-                grid = self._build_grid()  # #------------- Fix race -------------
+                grid = self._build_grid()
                 for entry in self._statebuffers:
-                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)  # #------------- Fix race -------------
+                    snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)
                     entry["statebuffer"].update(snap)
-                #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
                 self.tick += 1
                 return
-            #----------------- Lógica de accion para prueba -----------------
             state = self._states.get(agent_id) 
             if state is None:
                 return
@@ -223,14 +215,11 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
                     else:
                         self._distance_between -= DISTANCE_PER_ERROR
             state.last_action = action_name
-            self._check_game_over() #Descomentar Borrar# #
-            #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
-            grid = self._build_grid()  # #------------- Fix race -------------
+            self._check_game_over()
+            grid = self._build_grid()  
             for entry in self._statebuffers:
-                snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid)  # #------------- Fix race -------------
+                snap = self._build_state_snapshot(entry["agent_id"], grid_override=grid) 
                 entry["statebuffer"].update(snap)
-            #------------- Unico snapshot para todos los buffers (evita doble _get_obstacle_row) -------------
-            self.tick += 1
             self._update_difficulty()
             #print(f"Agente - {agent_id}: {action_name}")#COMENTARIO PARA ENCONTRAR MAS FACIL Debug para ver por consola las acciones hechas por el agente ante el siguiente obstaculo
 
@@ -281,7 +270,7 @@ class RunnerChaseEnvironment(SimulatedEnvironment):
         row = OBSTACLE_SPAWN_ROW - int(elapsed * ROWS_PER_SECOND)
         return row
 
-    def _avanzar_obstaculo_si_corresponde(self) -> None:
+    def advance_obstacle_needed(self) -> None:
         """Avanza _obstacle_index solo si pasaron 4s (row<1). Llamar una vez por tick con lock."""
         elapsed = time.time() - self._obstacle_spawn_time
         row = OBSTACLE_SPAWN_ROW - int(elapsed * ROWS_PER_SECOND)
